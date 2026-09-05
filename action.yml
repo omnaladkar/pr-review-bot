@@ -1,0 +1,80 @@
+name: "PR Review Bot"
+description: "Automated PR review: AI review + lint + security + conventional checks, posted as a GitHub review."
+author: "pr-review-bot"
+
+inputs:
+  github-token:
+    description: "GitHub token (use secrets.GITHUB_TOKEN)"
+    required: true
+    default: ${{ github.token }}
+  owner:
+    description: "Repository owner (default: from GITHUB_REPOSITORY)"
+    required: false
+  repo:
+    description: "Repository name (default: from GITHUB_REPOSITORY)"
+    required: false
+  pr-number:
+    description: "PR number (default: from event)"
+    required: false
+  ai-provider:
+    description: "openai | anthropic | openrouter | none"
+    required: false
+    default: openai
+  ai-model:
+    description: "Model name"
+    required: false
+  ai-api-key-env:
+    description: "Name of secret env var with the API key"
+    required: false
+    default: OPENAI_API_KEY
+  config:
+    description: "Inline JSON config overrides"
+    required: false
+
+outputs:
+  outcome:
+    description: "pass | fail"
+    value: ${{ steps.review.outputs.outcome }}
+  score:
+    description: "Numeric review score"
+    value: ${{ steps.review.outputs.score }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: "Checkout"
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: "Setup Node"
+      uses: actions/setup-node@v4
+      with:
+        node-version: "20"
+
+    - name: "Install bot"
+      shell: bash
+      run: |
+        cd "$GITHUB_ACTION_PATH"
+        npm install --silent >/dev/null 2>&1 || true
+        npx tsc -p tsconfig.json
+
+    - name: "Run review"
+      id: review
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        PR_NUMBER: ${{ inputs.pr-number || github.event.pull_request.number }}
+        BOT_CONFIG: ${{ inputs.config }}
+      run: |
+        cd "$GITHUB_ACTION_PATH"
+        node dist/index.js run \
+          --token "$GITHUB_TOKEN" \
+          -o "${{ inputs.owner || github.repository_owner }}" \
+          -r "${{ inputs.repo || github.event.repository.name }}" \
+          -p "$PR_NUMBER" \
+          -d "$GITHUB_WORKSPACE" \
+          --post \
+          >/tmp/pr-review-report.txt 2>&1 || true
+        cat /tmp/pr-review-report.txt
+        node -e "const fs=require('fs');const t=fs.readFileSync('/tmp/pr-review-report.txt','utf8');const o=t.match(/REVIEW_OUTCOME=(\\w+)/);const s=t.match(/REVIEW_SCORE=(\\d+)/);let out='';if(o)out+='outcome='+o[1]+'\n';if(s)out+='score='+s[1]+'\n';fs.writeFileSync(process.env.GITHUB_OUTPUT,out,{flag:'a'})"

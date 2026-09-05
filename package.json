@@ -1,0 +1,31 @@
+{
+  "name": "pr-review-bot",
+  "version": "1.0.0",
+  "description": "Auto-review bot for GitHub PRs: AI review + lint + security + conventional checks",
+  "type": "module",
+  "private": true,
+  "bin": {
+    "pr-review-bot": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsx src/index.ts",
+    "start": "node dist/index.js",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "setup:ollama": "powershell -ExecutionPolicy Bypass -File scripts/setup-ollama.ps1"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@octokit/rest": "^21.0.2",
+    "@octokit/action": "^8.0.0",
+    "commander": "^12.1.0",
+    "yaml": "^2.5.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.5.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.2"
+  }
+}
