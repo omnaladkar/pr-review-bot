@@ -167,13 +167,29 @@ async function postResult(
 
   const event = hasErrors && config.approval.requestChangesOnError ? "REQUEST_CHANGES" : config.approval.approveOnPass ? "APPROVE" : "COMMENT";
 
-  await client.postReview({
-    prNumber,
-    headSha,
-    body: hasErrors ? `${body}\n\nReview requested changes by default.` : body,
-    event,
-    comments: inline,
-  });
+  try {
+    await client.postReview({
+      prNumber,
+      headSha,
+      body: hasErrors ? `${body}\n\nReview requested changes by default.` : body,
+      event,
+      comments: inline,
+    });
+  } catch (err: unknown) {
+    // GitHub forbids REQUEST_CHANGES (and APPROVE) on your own PR.
+    const msg = err instanceof Error ? err.message : String(err);
+    if (/own pull request|request changes on your own/i.test(msg)) {
+      await client.postReview({
+        prNumber,
+        headSha,
+        body: `${body}\n\n(_Auto-fallback: posting as comment because GitHub doesn't allow requesting changes on your own PR._)`,
+        event: "COMMENT",
+        comments: inline,
+      });
+    } else {
+      throw err;
+    }
+  }
 
   console.log("\nPosted review to GitHub.");
 }
