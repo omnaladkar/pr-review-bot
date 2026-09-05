@@ -155,15 +155,24 @@ async function postResult(
     context: "pr-review-bot/review",
   });
 
-  // Post review comment with inline comments for actionable file/line findings.
-  const inline = result.findings
-    .filter((f) => f.file && f.line)
-    .slice(0, 50)
-    .map((f) => ({
-      path: f.file!,
-      line: f.line!,
-      body: `**[${f.severity}] ${f.rule}** — ${f.message}${f.suggestedFix ? `\n\n_Fix:_ ${f.suggestedFix}` : ""}`,
-    }));
+  // Post review comment with inline comments ONLY on lines that exist in the PR diff.
+  // GitHub rejects ("Line could not be resolved") any comment on unchanged/reviewed-off code.
+  const reviewable = await client.getReviewableLines(prNumber);
+  const withLoc = result.findings.filter((f) => f.file && f.line);
+  const inline: Array<{ path: string; line: number; body: string }> = [];
+  const noLoc: string[] = [];
+  for (const f of withLoc.slice(0, 50)) {
+    const isValidLine = reviewable.get(f.file!)?.has(f.line!);
+    const tooltip = `**[${f.severity}] ${f.rule}** — ${f.message}${f.suggestedFix ? `\n\n_Fix:_ ${f.suggestedFix}` : ""}`;
+    if (isValidLine) {
+      inline.push({ path: f.file!, line: f.line!, body: tooltip });
+    } else {
+      noLoc.push(`- ${tooltip.replace(/\n/g, " ")}`);
+    }
+  }
+  if (noLoc.length > 0) {
+    body += `\n\n<details><summary>Findings without reviewable location</summary>\n\n${noLoc.join("\n")}\n\n</details>`;
+  }
 
   const event = hasErrors && config.approval.requestChangesOnError ? "REQUEST_CHANGES" : config.approval.approveOnPass ? "APPROVE" : "COMMENT";
 
@@ -176,8 +185,8 @@ async function postResult(
       comments: inline,
     });
   } catch (err: unknown) {
-    // GitHub forbids REQUEST_CHANGES (and APPROVE) on your own PR.
     const msg = err instanceof Error ? err.message : String(err);
+    // GitHub forbids REQUEST_CHANGES/APPROVE on your own PR -> fall back to COMMENT.
     if (/own pull request|request changes on your own/i.test(msg)) {
       await client.postReview({
         prNumber,
@@ -185,6 +194,14 @@ async function postResult(
         body: `${body}\n\n(_Auto-fallback: posting as comment because GitHub doesn't allow requesting changes on your own PR._)`,
         event: "COMMENT",
         comments: inline,
+      });
+    } else if (/line could not be resolved/i.test(msg)) {
+      // Some inline comment points at an unresolvable line; retry without inline comments.
+      await client.postReview({
+        prNumber,
+        headSha,
+        body: `${body}\n\n(_Inline comments omitted: some findings couldn't be anchored to the diff._)`,
+        event: event === "APPROVE" || event === "COMMENT" ? event : "COMMENT",
       });
     } else {
       throw err;

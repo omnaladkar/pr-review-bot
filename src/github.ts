@@ -86,6 +86,7 @@ export class GitHubClient {
       additions: number;
       deletions: number;
       changes: number;
+      patch?: string;
     }> = [];
     let page = 1;
     for (;;) {
@@ -103,12 +104,53 @@ export class GitHubClient {
           additions: f.additions,
           deletions: f.deletions,
           changes: f.changes,
+          patch: f.patch,
         }))
       );
       if (res.data.length < 100) break;
       page++;
     }
     return files;
+  }
+
+  /**
+   * Compute the set of (file, line) that appear as *added* lines in the PR diff.
+   * GitHub only allows inline review comments on lines present in the diff.
+   */
+  async getReviewableLines(
+    prNumber: number
+  ): Promise<Map<string, Set<number>>> {
+    const map = new Map<string, Set<number>>();
+    const files = await this.getChangedFiles(prNumber);
+    for (const f of files) {
+      if (!f.patch) continue;
+      let newLine = 0;
+      let inAdd = false;
+      for (const raw of f.patch.split("\n")) {
+        const hm = raw.match(/^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
+        if (hm) {
+          newLine = Number(hm[1]);
+          inAdd = false;
+          continue;
+        }
+        if (!raw.startsWith("@@")) {
+          if (raw.startsWith("+")) {
+            inAdd = true;
+            const set = map.get(f.filename) ?? new Set<number>();
+            set.add(newLine);
+            map.set(f.filename, set);
+            newLine++;
+          } else if (raw.startsWith("-")) {
+            inAdd = false;
+          } else if (raw.startsWith(" ") || raw.startsWith("\\")) {
+            newLine++;
+            inAdd = false;
+          }
+        }
+      }
+      void inAdd;
+    }
+    return map;
   }
 
   async getStatusChecks(headSha: string) {
